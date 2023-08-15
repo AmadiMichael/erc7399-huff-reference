@@ -1,0 +1,3 @@
+#define error OnlyOwner(address caller, address owner)
+#define error UnsupportedToken(address token)
+#define error InsufficientBalance(uint256 expected, uint256 balance)

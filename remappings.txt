@@ -1,0 +1,5 @@
+@prb/test/=lib/prb-test/src/
+forge-std/=lib/forge-std/src/
+erc7399=lib/erc7399/src/
+huffmate/=lib/huffmate/src/
+huff-console/=lib/Huff-Console/src/

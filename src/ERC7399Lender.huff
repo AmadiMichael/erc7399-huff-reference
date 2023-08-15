@@ -1,0 +1,452 @@
+/// @author Michael Amadi `https://github.com/AmadiMichaels
+/// @dev Minimal {ERC7399} Huff contract that allows flash lending of a single asset for a fixed fee.
+
+
+// Imports
+#include "./lib/Errors.huff"
+#include "huffmate/utils/SafeTransferLib.huff"
+#include "huff-console/Console.huff"
+
+// INTERFACE
+#define function end() nonpayable returns()
+#define function maxFlashLoan(address asset_) view returns(uint256)
+#define function flashFee(address asset_, uint256 amount) view returns(uint256)
+// #define function flash(address loanReceiver, address asset_, uint256 amount, bytes calldata data, function(address, address, address, uint256, uint256, bytes memory) nonpayable returns (bytes memory) callback) nonpayable returns(bytes memory)
+#define function deposit(uint256 amount) nonpayable returns()
+
+// EVENTS
+#define event Flash(address indexed asset, uint256 amount, uint256 fee)
+
+
+// STORAGE SLOTS
+#define constant RESERVES = FREE_STORAGE_POINTER()
+
+// Wrapper huff contract requirements
+// #define constant OWNER = 0x...
+// #define constant ASSET = 0x...
+// #define constant FEE = 0x...
+
+// CONSTANTS
+#define constant __UINT256_MAX = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+#define constant __UINT160_MAX = 0xffffffffffffffffffffffffffffffffffffffff
+#define constant __UINT32_MAX = 0xffffffff
+#define constant TEN_THOUSAND = 0x2710
+
+// ENTRY POINT
+#define macro MAIN() = {
+    0x00 calldataload 0xe0 shr                                                                      // [func_sig]
+
+    dup1 0x40a08f10 eq flash_jumpdest jumpi                                                         // [func_sig]
+    dup1 __FUNC_SIG(end) eq end_jumpdest jumpi                                                      // [func_sig]
+    dup1 __FUNC_SIG(maxFlashLoan) eq maxFlashLoan_jumpdest jumpi                                    // [func_sig]
+    dup1 __FUNC_SIG(flashFee) eq flashFee_jumpdest jumpi                                            // [func_sig]
+    dup1 __FUNC_SIG(deposit) eq deposit_jumpdest jumpi                                              // [func_sig]
+
+    0x00 0x00 revert
+
+
+    flash_jumpdest:
+        FLASH()
+    
+    end_jumpdest:
+        END()
+
+    maxFlashLoan_jumpdest:
+        MAX_FLASHLOAN()
+
+    flashFee_jumpdest:
+        FLASH_FEE()
+
+    deposit_jumpdest:
+        DEPOSIT()
+}
+
+
+
+#define macro DEPOSIT() = {
+    [ASSET]
+    0x04 calldataload
+    address
+    caller
+    SAFE_TRANSFER_FROM(0x00)
+
+    [RESERVES] sload
+    0x04 calldataload
+    add
+    [RESERVES] sstore
+
+    stop
+}
+
+
+// Flash function implementation
+/**
+ * function flash(address loanReceiver, address asset_, uint256 amount, bytes calldata data, function(address, address, address, uint256, uint256, bytes memory) external returns (bytes memory) callback) external returns(bytes memory)
+ *
+ * Input data expected
+ * 0x00 - 0x04: 0x........
+ * 0x04 - 0x24: address loanReceiver
+ * 0x24 - 0x44: address asset_
+ * 0x44 - 0x64: amount
+ * 0x64 - 0x84: offset to `bytes calldata data`
+ * 0x84 - 0xa4: function(address, address, address, uint256, uint256, bytes memory) external returns (bytes memory) callback
+ * 0xa4 - 0xc4: length of `bytes calldata data`
+ * 0xc4 - 0xe4: start of `bytes calldata data`
+ */
+#define macro FLASH() = {
+    // confirm that asset_ is supported
+    0x24 calldataload                                                                               // [asset_]
+    IS_SUPPORTED()                                                                                  // [asset_]
+
+    // get flash fee
+    0x44 calldataload                                                                               // [amount, asset_]
+    dup1                                                                                            // [amount, amount, asset_]
+    _FLASH_FEE()                                                                                    // [flash_fee, amount, asset_]
+
+    // serve loan
+    0x04 calldataload                                                                               // [loanReceiver, flash_fee, amount, asset_]
+    dup3                                                                                            // [amount, loanReceiver, flash_fee, amount, asset_]
+    _SERVE_LOAN()                                                                                   // [flash_fee, amount, asset_]
+
+
+    // make callback
+    /**
+     * function type layout
+     * 0x84 - 0x98: address to callback to
+     * 0x98 - 0x9c: function signature to call
+     * 0x9c - 0xa4: 0x0000000000000000
+     */
+    0x84 calldataload                                                                               // [function_type_encoded, flash_fee, amount, asset_]
+    // LOG_STACK_1(0x00)
+    // get address
+    dup1 0x60 shr                                                                                   // [callback_address, function_type_encoded, flash_fee, amount, asset_]
+
+    // get function sig
+    swap1                                                                                           // [function_type_encoded, callback_address, flash_fee, amount, asset_]
+    0x40 shr                                                                                        // [shr(0x10, function_type_encoded), callback_address, flash_fee, amount, asset_]
+    // LOG_STACK_2(0x00)
+
+    [__UINT32_MAX] and                                                                              // [callback_function_sig, callback_address, flash_fee, amount, asset_]
+    0xe0 shl
+    // LOG_STACK_1(0x00)
+
+    // prepare memory to make call
+    /**
+     * Expected callback input
+     * 0x00 - 0x04: callback_function_sig
+     * 0x04 - 0x24: msg.sender
+     * 0x24 - 0x44: address(this)
+     * 0x44 - 0x64: asset
+     * 0x64 - 0x84: amount
+     * 0x84 - 0xa4: fee
+     * 0xa4 - 0xc4: offset to `data` (in this case it will always be 0x20)
+     * 0xc4 - 0xe4: length of `data`
+     * 0xe4 - 0x104: start f `data`
+     */
+    // mstore callback function sig
+    0x00 mstore                                                                                     // [callback_address, flash_fee, amount, asset_]
+    // mstore msg.sender
+    caller 0x04 mstore                                                                              // [callback_address, flash_fee, amount, asset_]
+    // mstore address(this)
+    _REPAY_TO() 0x24 mstore                                                                         // [callback_address, flash_fee, amount, asset_]
+    // mstore asset
+    swap3 0x44 mstore                                                                               // [flash_fee, amount, callback_address]
+    // mstore amount
+    dup2 0x64 mstore                                                                                // [flash_fee, amount, callback_address]
+    // mstore fee
+    dup1 0x84 mstore                                                                                // [flash_fee, amount, callback_address]
+    // mstore data offset (always 0x20 since data is the last parameter)
+    0xc0 0xa4 mstore                                                                                // [flash_fee, amount, callback_address]
+
+    // mstore length and all of data
+    // use calldatacopy
+    // push length to the stack (note: length + 0x20 since we are also copying length offset)
+    0x20 0xa4 calldataload add                                                                      // [len, flash_fee, amount, callback_address]
+    dup1                                                                                            // [len, len, flash_fee, amount, callback_address]
+    0xa4 0xc4                                                                                       // [destOffset, offset, len, len, flash_fee, amount, callback_address]
+    calldatacopy                                                                                    // [len, flash_fee, amount, callback_address]
+
+    // prepare the stack for call
+    0x00 0x00                                                                                       // [outOffset, outSize, len, flash_fee, amount, callback_address]
+    0xc4 dup4 add                                                                                   // [inSize, outOffset, outSize, len, flash_fee, amount, callback_address]
+    0x00 0x00                                                                                       // [value, inoffset, inSize, outOffset, outSize, len, flash_fee, amount, callback_address]
+    dup9 gas                                                                                        // [gas, addresss, value, inoffset, inSize, outOffset, outSize, len, flash_fee, amount, callback_address]
+
+    // before call, check that callback address has code deployed to it
+    dup2 CONFIRM_THAT_ADDRES_HAS_CODE()                                                             // [gas, addresss, value, inoffset, inSize, outOffset, outSize, len, flash_fee, amount, callback_address]
+
+    // make call
+    call                                                                                            // [success, len, flash_fee, amount, callback_address]
+    accept_transfer_jumpdest jumpi                                                                  // [len, flash_fee, amount, callback_address]
+    0x00 0x00 revert
+
+
+    accept_transfer_jumpdest:                                                                       // [len, flash_fee, amount, callback_address]
+        pop dup1                                                                                    // [flash_fee, flash_fee, amount, callback_address]
+        _ACCEPT_TRANSFER()                                                                          // [flash_fee, amount, callback_address]
+
+
+    // emit Flash event
+    // store unindexed params in memory
+    0x20 mstore                                                                                     // [amount, callback_address]
+    0x00 mstore                                                                                     // [callback_address]
+    0x24 calldataload                                                                               // [asset_, callback_address]
+    __EVENT_HASH(Flash)                                                                             // [flash_event_hash, asset_, callback_address]
+    0x20 0x00                                                                                       // [offset, size, flash_event_hash, asset_, callback_address]
+    log2                                                                                            // [callback_address]
+
+
+
+    // return result of callback call
+    // store the offset
+    0x20 0x00 mstore                                                                                // [callback_address]
+    // store length in memory
+    returndatasize 0x20 mstore                                                                      // [callback_address]
+    // copy the data into memory
+    returndatasize 0x00 0x40                                                                        // [size, offset, destOffset, callback_address]
+    returndatacopy                                                                                  // [callback_address]
+
+    // return it
+    returndatasize 0x40 add                                                                         // [length, callback_address]
+    0x00                                                                                            // [offset, length, callback_address]
+    return                                                                                                                                  
+}
+
+// End function implementation
+/**
+ * #define function end() external
+ *
+ * Input data expected
+ * 0x00 - 0x04: 0x........
+ */
+#define macro END() = {
+    ONLY_OWNER()
+
+    // continue execution
+    transfer_all_contracts_asset_to_owner:                                                          // []
+        [ASSET]                                                                                     // [token]
+        GET_ASSET_BALANCE_OF_THIS()                                                                 // [amount, token]
+        [OWNER]                                                                                     // [to, amount, token]
+        SAFE_TRANSFER(0x00)                                                                         // []
+    
+    // stop execution with a success
+    stop
+}
+
+// Max Flash loan function implementation
+/**
+ * function maxFlashLoan(address asset_) external view returns(uint256)
+ *
+ * Input data expected
+ * 0x00 - 0x04: 0x........
+ * 0x04 - 0x24: address asset_
+ */
+#define macro MAX_FLASHLOAN() = {
+    // confirm that asset_ is supported
+    0x04 calldataload                                                                               // [asset_]
+    IS_SUPPORTED()                                                                                  // [asset_]
+    pop                                                                                             // []
+
+    // sload reserves from storage and store it in memory
+    [RESERVES] sload                                                                                // [reserves]
+    0x00 mstore                                                                                     // []
+
+    // return it
+    0x20 0x00 return                                                              
+}
+
+// Flash fee function implementation
+/**
+ * function flashFee(address asset_) external view returns(uint256)
+ *
+ * Input data expected
+ * 0x00 - 0x04: 0x........
+ * 0x04 - 0x24: address asset_
+ * 0x04 - 0x44: uint256 amount
+ */
+#define macro FLASH_FEE() = {
+    // confirm that asset_ is supported
+    0x04 calldataload                                                                               // [asset_]
+    IS_SUPPORTED()                                                                                  // [asset_]
+    pop                                                                                             // []
+
+    0x24 calldataload                                                                               // [amount]
+    _FLASH_FEE()                                                                                    // [flash_fee]
+    0x00 mstore                                                                                     // []
+    0x20 0x00 return
+}
+
+
+
+
+//  Modifiers
+#define macro ONLY_OWNER() = {
+    // if msg.sender is not == owner, revert with onlyowner error else jump to transfer asset to owner
+    caller [OWNER] eq                                                                               // [(owner == msg.sender)]
+    continue jumpi                                                                                  // []
+
+    // revert if execution gets here
+    __ERROR(OnlyOwner) 0x00 mstore                                                                  // []
+    caller 0x04 mstore                                                                              // []
+    [OWNER] 0x24 mstore                                                                             // []
+    0x44 0x00 revert                                                                                // []
+
+    continue:                                                                                       // []
+}
+
+#define macro IS_SUPPORTED() = takes(1) returns(0) {
+    // Input stack:            [asset_]
+
+    // reverts if asset_ is nor equal to stored constant ASSET
+    dup1 [ASSET] eq                                                                                 // [(ASSET == asset_), asset_]
+    continue jumpi                                                                                  // [asset_]
+    
+    // reverts if execution gets here
+    __ERROR(UnsupportedToken) 0x00 mstore                                                           // [asset_]
+    0x04 mstore                                                                                     // []
+    0x24 0x00 revert                                                                                // []
+
+    continue:                                                                                       // [asset_]
+}
+
+
+
+// Internal 
+
+#define macro _FLASH_FEE() = takes(1) returns(1) {
+    // Input stack:             [amount]
+
+    // return reserves > amount ? type(uint256).max : (amount * fee / 10_000);
+    dup1                                                                                            // [amount, amount]
+    [RESERVES] sload                                                                                // [reserves, amount, amount]
+    gt iszero                                                                                       // [iszero(reserves > amount), amount]
+    return_max jumpi                                                                                // [amount]
+
+    // if it gets here return (amount * fee / 10_000)
+    [FEE] mul                                                                                       // [(amount * fee)]
+    [TEN_THOUSAND] swap1 div                                                                        // [flash_fee]
+    continue jump                                                                                   // [flash_fee]
+
+    // if it gets here, return type(uint256).max
+    return_max:                                                                                     // [amount]
+        pop                                                                                         // []
+        [__UINT256_MAX]                                                                             // [flash_fee]
+
+    continue:                                                                                       // [flash_fee]
+}
+
+
+
+
+
+#define macro _ACCEPT_TRANSFER() = takes(1) returns(0) {
+    // Input stack:             [flash_fee]
+    [RESERVES] sload add                                                                            // [expected_reserves]
+    GET_ASSET_BALANCE_OF_THIS()                                                                     // [currentReserves, expected_reserves]
+
+    // sstore expected reserves in storage
+    dup2 [RESERVES] sstore                                                                          // [currentReserves, expected_reserves]
+
+    dup2 dup2                                                                                       // [currentReserves, expected_reserves, currentReserves, expected_reserves]
+    lt                                                                                              // [(currentReserves < expected_reserves), currentReserves, expected_reserves]
+    iszero continue jumpi                                                                           // [currentReserves, expected_reserves]
+
+    // revert if it gets here
+    __ERROR(InsufficientBalance) 0x00 mstore                                                        // [currentReserves, expected_reserves]
+    0x24 mstore                                                                                     // [currentReserves]
+    0x04 mstore                                                                                     // []
+    0x44 0x00 revert                                                                        
+
+    continue:                                                                                       // [currentReserves, expected_reserves]
+        pop pop                                                                                     // []
+}
+
+#define macro _SERVE_LOAN() = takes(2) returns(0) {
+    // Input stack:             [amount, to]
+
+    [ASSET] swap2                                                                                   // [to, amount, token]
+    SAFE_TRANSFER(0x00)                                                                             // []
+}
+
+#define macro _REPAY_TO() = {
+    address
+}
+
+
+
+#define macro SAFE_TRANSFER(mem_ptr) = takes(3) returns(0) {
+    // Input stack:            [to, amount, token]
+    // Output stack:           []
+
+    dup3 CONFIRM_THAT_ADDRES_HAS_CODE()                                                             // [to, amount, token]
+
+
+    continue_transfer:
+        __RIGHTPAD(0xa9059cbb)                                                                      // [transfer_selector, to, amount, token]
+        <mem_ptr>                                                                                   // [mem_ptr, transfer_selector, to, amount, token]
+        mstore                                                                                      // [to, amount, token]
+
+        <mem_ptr> 0x04 add                                                                          // [mem_ptr + 0x04, to, amount, token]
+        mstore                                                                                      // [amount, token]
+        <mem_ptr> 0x24 add                                                                          // [mem_ptr + 0x24, amount, token]
+        mstore
+
+        <mem_ptr> 0x44                                                                              // [0x44, mem_ptr, token]
+        dup2 0x00                                                                                   // [0x00, mem_ptr, 0x44, mem_ptr, token]
+        0x20 swap5                                                                                  // [token, 0x00, mem_ptr, 0x44, mem_ptr, 0x20]
+        gas call                                                                                    // [success]
+
+        returndatasize                                                                              // [returndatasize, success]
+        iszero                                                                                      // [returndatasize == 0, success]
+        <mem_ptr>                                                                                   // [offset, returndatasize == 0, success]
+        mload                                                                                       // [data, returndatasize == 0, success]
+        0x01 eq                                                                                     // [data == 0x01, returndatasize == 0, success]
+        or                                                                                          // [data == 0x01 | returndatasize == 0, success]
+
+        and                                                                                         // [success & (data == 0x01 | returndatasize == 0)]
+        success jumpi                                                                               // []
+
+        0x90b8ec18 0x00 mstore                                                                      // []
+        0x04 0x1c revert                                                                        
+
+        success:
+}
+
+
+
+
+
+
+/// @notice gets weth balance of address(this) of a token
+#define macro GET_ASSET_BALANCE_OF_THIS() = takes(0) returns(1) {
+    [ASSET]                                                                                         // [Asset]
+    CONFIRM_THAT_ADDRES_HAS_CODE()                                                                  // []
+
+    __RIGHTPAD(0x70a08231) 0x00 mstore                                                              // []
+    address 0x04 mstore                                                                             // []
+    0x20 0x00 0x24 0x00                                                                             // [in, insize, out, outsize]
+    [ASSET] gas staticcall                                                                          // [success]
+
+    iszero balanceOfCallFailed jumpi                                                                // []
+    0x00 mload                                                                                      // [asset.balanceOf(address(this))]
+    continue jump                                                                                   // [asset.balanceOf(address(this))]
+
+    balanceOfCallFailed:
+        0x00 0x00 revert
+
+    continue:                                                                                       // [assset.balanceOf(address(this))]
+}
+
+
+
+#define macro CONFIRM_THAT_ADDRES_HAS_CODE() = takes(1) returns(0) {
+    // Input stack:                [addr]
+
+
+    // confirm that `address` is has code deployed to it else revert
+    extcodesize                                                                                     // [extcodesize(addr)]
+    continue jumpi                                                                                  // []
+    0x00 0x00 revert                                                                    
+
+    continue:
+}
