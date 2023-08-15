@@ -7,3 +7,6 @@
 [submodule "lib/erc7399"]
 	path = lib/erc7399
 	url = https://github.com/alcueca/erc7399
+[submodule "lib/foundry-huff"]
+	path = lib/foundry-huff
+	url = https://github.com/huff-language/foundry-huff
