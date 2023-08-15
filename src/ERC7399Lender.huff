@@ -158,65 +158,65 @@
     // mstore address(this)
     _REPAY_TO() 0x24 mstore                                                                         // [callback_address, flash_fee, amount, asset_]
     // mstore asset
-    swap3 0x44 mstore                                                                               // [flash_fee, amount, callback_address]
+    dup4 0x44 mstore                                                                                // [callback_address, flash_fee, amount, asset_]
     // mstore amount
-    dup2 0x64 mstore                                                                                // [flash_fee, amount, callback_address]
+    dup3 0x64 mstore                                                                                // [callback_address, flash_fee, amount, asset_]
     // mstore fee
-    dup1 0x84 mstore                                                                                // [flash_fee, amount, callback_address]
+    dup2 0x84 mstore                                                                                // [callback_address, flash_fee, amount, asset_]
     // mstore data offset (always 0x20 since data is the last parameter)
-    0xc0 0xa4 mstore                                                                                // [flash_fee, amount, callback_address]
+    0xc0 0xa4 mstore                                                                                // [callback_address, flash_fee, amount, asset_]
 
     // mstore length and all of data
     // use calldatacopy
     // push length to the stack (note: length + 0x20 since we are also copying length offset)
-    0x20 0xa4 calldataload add                                                                      // [len, flash_fee, amount, callback_address]
-    dup1                                                                                            // [len, len, flash_fee, amount, callback_address]
-    0xa4 0xc4                                                                                       // [destOffset, offset, len, len, flash_fee, amount, callback_address]
-    calldatacopy                                                                                    // [len, flash_fee, amount, callback_address]
+    0x20 0xa4 calldataload add                                                                      // [len, callback_address, flash_fee, amount, asset_]
+    dup1                                                                                            // [len, len, callback_address, flash_fee, amount, asset_]
+    0xa4 0xc4                                                                                       // [destOffset, offset, len, len, callback_address, flash_fee, amount, asset_]
+    calldatacopy                                                                                    // [len, callback_address, flash_fee, amount, asset_]
 
     // prepare the stack for call
-    0x00 0x00                                                                                       // [outOffset, outSize, len, flash_fee, amount, callback_address]
-    0xc4 dup4 add                                                                                   // [inSize, outOffset, outSize, len, flash_fee, amount, callback_address]
-    0x00 0x00                                                                                       // [value, inoffset, inSize, outOffset, outSize, len, flash_fee, amount, callback_address]
-    dup9 gas                                                                                        // [gas, addresss, value, inoffset, inSize, outOffset, outSize, len, flash_fee, amount, callback_address]
+    0x00 0x00                                                                                       // [outOffset, outSize, len, callback_address, flash_fee, amount, asset_]
+    0xc4 dup4 add                                                                                   // [inSize, outOffset, outSize, len, callback_address, flash_fee, amount, asset_]
+    0x00 0x00                                                                                       // [value, inoffset, inSize, outOffset, outSize, len, callback_address, flash_fee, amount, asset_]
+    dup7 gas                                                                                        // [gas, address, value, inoffset, inSize, outOffset, outSize, len, callback_address, flash_fee, amount, asset_]
 
     // before call, check that callback address has code deployed to it
-    dup2 CONFIRM_THAT_ADDRES_HAS_CODE()                                                             // [gas, addresss, value, inoffset, inSize, outOffset, outSize, len, flash_fee, amount, callback_address]
+    dup2 CONFIRM_THAT_ADDRES_HAS_CODE()                                                             // [gas, address, value, inoffset, inSize, outOffset, outSize, len, callback_address, flash_fee, amount, asset_]
 
     // make call
-    call                                                                                            // [success, len, flash_fee, amount, callback_address]
-    accept_transfer_jumpdest jumpi                                                                  // [len, flash_fee, amount, callback_address]
+    call                                                                                            // [success, len, callback_address, flash_fee, amount, asset_]
+    accept_transfer_jumpdest jumpi                                                                  // [len, callback_address, flash_fee, amount, asset_]
     0x00 0x00 revert
 
     // accept transfer
-    accept_transfer_jumpdest:                                                                       // [len, flash_fee, amount, callback_address]
-        pop dup1                                                                                    // [flash_fee, flash_fee, amount, callback_address]
-        _ACCEPT_TRANSFER()                                                                          // [flash_fee, amount, callback_address]
+    accept_transfer_jumpdest:                                                                       // [len, callback_address, flash_fee, amount, asset_]
+        pop dup2                                                                                    // [flash_fee, callback_address, flash_fee, amount, asset_]
+        _ACCEPT_TRANSFER()                                                                          // [callback_address, flash_fee, amount, asset_]
 
 
     // emit Flash event
     // store unindexed params in memory
-    0x20 mstore                                                                                     // [amount, callback_address]
-    0x00 mstore                                                                                     // [callback_address]
-    0x24 calldataload                                                                               // [asset_, callback_address]
-    __EVENT_HASH(Flash)                                                                             // [flash_event_hash, asset_, callback_address]
-    0x20 0x00                                                                                       // [offset, size, flash_event_hash, asset_, callback_address]
-    log2                                                                                            // [callback_address]
+    pop                                                                                             // [flash_fee, amount, asset_]
+    0x20 mstore                                                                                     // [amount, asset_]
+    0x00 mstore                                                                                     // [asset_]
+    __EVENT_HASH(Flash)                                                                             // [flash_event_hash, asset_]
+    0x20 0x00                                                                                       // [offset, size, flash_event_hash, asset_]
+    log2                                                                                            // []
 
 
 
     // return result of callback call
     // store the offset
-    0x20 0x00 mstore                                                                                // [callback_address]
+    0x20 0x00 mstore                                                                                // []
     // store length in memory
-    returndatasize 0x20 mstore                                                                      // [callback_address]
+    returndatasize 0x20 mstore                                                                      // []
     // copy the data into memory
-    returndatasize 0x00 0x40                                                                        // [size, offset, destOffset, callback_address]
-    returndatacopy                                                                                  // [callback_address]
+    returndatasize 0x00 0x40                                                                        // [destOffset, offset, size]
+    returndatacopy                                                                                  // []
 
     // return it
-    returndatasize 0x40 add                                                                         // [length, callback_address]
-    0x00                                                                                            // [offset, length, callback_address]
+    returndatasize 0x40 add                                                                         // [length]
+    0x00                                                                                            // [offset, length]
     return                                                                                                                                  
 }
 
