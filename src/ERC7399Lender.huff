@@ -1,24 +1,30 @@
-/// @author Michael Amadi `https://github.com/AmadiMichaels
+/// @author Michael Amadi `https://github.com/AmadiMichaels`
 /// @dev Minimal {ERC7399} Huff contract that allows flash lending of a single asset for a fixed fee.
 
 
-// Imports
+/// @notice Imports
 #include "./lib/Errors.huff"
 #include "huffmate/utils/SafeTransferLib.huff"
 #include "huff-console/Console.huff"
+#include "huffmate/utils/Constants.huff"
 
-// INTERFACE
+
+/// @notice INTERFACE
 #define function end() nonpayable returns()
 #define function maxFlashLoan(address asset_) view returns(uint256)
 #define function flashFee(address asset_, uint256 amount) view returns(uint256)
-// #define function flash(address loanReceiver, address asset_, uint256 amount, bytes calldata data, function(address, address, address, uint256, uint256, bytes memory) nonpayable returns (bytes memory) callback) nonpayable returns(bytes memory)
+// #define function flash(address loanReceiver, address asset_, uint256 amount, bytes calldata data, function callback) nonpayable returns(bytes memory)
 #define function deposit(uint256 amount) nonpayable returns()
 
-// EVENTS
+
+
+/// @notice EVENTS
 #define event Flash(address indexed asset, uint256 amount, uint256 fee)
 
 
-// STORAGE SLOTS
+
+
+/// @notice STORAGE SLOTS
 #define constant RESERVES = FREE_STORAGE_POINTER()
 
 // Wrapper huff contract requirements
@@ -26,17 +32,19 @@
 // #define constant ASSET = 0x...
 // #define constant FEE = 0x...
 
-// CONSTANTS
-#define constant __UINT256_MAX = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-#define constant __UINT160_MAX = 0xffffffffffffffffffffffffffffffffffffffff
-#define constant __UINT32_MAX = 0xffffffff
-#define constant TEN_THOUSAND = 0x2710
 
-// ENTRY POINT
+
+/// @notice CONSTANTS
+#define constant TEN_THOUSAND = 0x2710
+#define constant FLASH_FUNC_SIG = 0x40a08f10 // flash(address loanReceiver, address asset_, uint256 amount, bytes calldata data, function callback) nonpayable returns(bytes memory)
+
+
+
+/// @notice ENTRY POINT
 #define macro MAIN() = {
     0x00 calldataload 0xe0 shr                                                                      // [func_sig]
 
-    dup1 0x40a08f10 eq flash_jumpdest jumpi                                                         // [func_sig]
+    dup1 [FLASH_FUNC_SIG] eq flash_jumpdest jumpi                                                   // [func_sig]
     dup1 __FUNC_SIG(end) eq end_jumpdest jumpi                                                      // [func_sig]
     dup1 __FUNC_SIG(maxFlashLoan) eq maxFlashLoan_jumpdest jumpi                                    // [func_sig]
     dup1 __FUNC_SIG(flashFee) eq flashFee_jumpdest jumpi                                            // [func_sig]
@@ -63,6 +71,7 @@
 
 
 
+/// @notice temporal deposit function for testing
 #define macro DEPOSIT() = {
     [ASSET]
     0x04 calldataload
@@ -79,7 +88,8 @@
 }
 
 
-// Flash function implementation
+
+/// @notice Flash function implementation
 /**
  * function flash(address loanReceiver, address asset_, uint256 amount, bytes calldata data, function(address, address, address, uint256, uint256, bytes memory) external returns (bytes memory) callback) external returns(bytes memory)
  *
@@ -109,28 +119,26 @@
     _SERVE_LOAN()                                                                                   // [flash_fee, amount, asset_]
 
 
-    // make callback
+    /// make callback
     /**
-     * function type layout
+     * function type layout (basically a bytes24)
      * 0x84 - 0x98: address to callback to
      * 0x98 - 0x9c: function signature to call
      * 0x9c - 0xa4: 0x0000000000000000
      */
     0x84 calldataload                                                                               // [function_type_encoded, flash_fee, amount, asset_]
-    // LOG_STACK_1(0x00)
+
     // get address
     dup1 0x60 shr                                                                                   // [callback_address, function_type_encoded, flash_fee, amount, asset_]
 
     // get function sig
     swap1                                                                                           // [function_type_encoded, callback_address, flash_fee, amount, asset_]
     0x40 shr                                                                                        // [shr(0x10, function_type_encoded), callback_address, flash_fee, amount, asset_]
-    // LOG_STACK_2(0x00)
 
     [__UINT32_MAX] and                                                                              // [callback_function_sig, callback_address, flash_fee, amount, asset_]
-    0xe0 shl
-    // LOG_STACK_1(0x00)
+    0xe0 shl                                                                                        // [callback_function_sig, callback_address, flash_fee, amount, asset_]
 
-    // prepare memory to make call
+    /// prepare memory to make call
     /**
      * Expected callback input
      * 0x00 - 0x04: callback_function_sig
@@ -141,7 +149,7 @@
      * 0x84 - 0xa4: fee
      * 0xa4 - 0xc4: offset to `data` (in this case it will always be 0x20)
      * 0xc4 - 0xe4: length of `data`
-     * 0xe4 - 0x104: start f `data`
+     * 0xe4 - 0x104: start of `data`
      */
     // mstore callback function sig
     0x00 mstore                                                                                     // [callback_address, flash_fee, amount, asset_]
@@ -180,7 +188,7 @@
     accept_transfer_jumpdest jumpi                                                                  // [len, flash_fee, amount, callback_address]
     0x00 0x00 revert
 
-
+    // accept transfer
     accept_transfer_jumpdest:                                                                       // [len, flash_fee, amount, callback_address]
         pop dup1                                                                                    // [flash_fee, flash_fee, amount, callback_address]
         _ACCEPT_TRANSFER()                                                                          // [flash_fee, amount, callback_address]
@@ -212,7 +220,9 @@
     return                                                                                                                                  
 }
 
-// End function implementation
+
+
+/// @notice End function implementation
 /**
  * #define function end() external
  *
@@ -233,7 +243,9 @@
     stop
 }
 
-// Max Flash loan function implementation
+
+
+/// @notice Max Flash loan function implementation
 /**
  * function maxFlashLoan(address asset_) external view returns(uint256)
  *
@@ -255,7 +267,9 @@
     0x20 0x00 return                                                              
 }
 
-// Flash fee function implementation
+
+
+/// @notice Flash fee function implementation
 /**
  * function flashFee(address asset_) external view returns(uint256)
  *
@@ -279,7 +293,9 @@
 
 
 
-//  Modifiers
+//  MODIFIERS
+
+/// @notice reverts if caller is not owner
 #define macro ONLY_OWNER() = {
     // if msg.sender is not == owner, revert with onlyowner error else jump to transfer asset to owner
     caller [OWNER] eq                                                                               // [(owner == msg.sender)]
@@ -294,6 +310,9 @@
     continue:                                                                                       // []
 }
 
+
+
+/// @notice reverts if asset inputted by user to flash loan is not == asset the contract is created to flash loan
 #define macro IS_SUPPORTED() = takes(1) returns(0) {
     // Input stack:            [asset_]
 
@@ -311,8 +330,10 @@
 
 
 
-// Internal 
+// INTERNAL FUNCTIONS AND HELPERS
 
+/// @notice returns the flash fee if amount to flash loan is <= current reserves else returns uint256.max
+/// @dev if amount is <= reserves, the formula to calculate falsh amount is (amount * fee / 10_000)
 #define macro _FLASH_FEE() = takes(1) returns(1) {
     // Input stack:             [amount]
 
@@ -338,7 +359,7 @@
 
 
 
-
+/// @dev accepts transfer and checks that the amount expected is greater than or equal to the current reserves, else reverts
 #define macro _ACCEPT_TRANSFER() = takes(1) returns(0) {
     // Input stack:             [flash_fee]
     [RESERVES] sload add                                                                            // [expected_reserves]
@@ -361,6 +382,9 @@
         pop pop                                                                                     // []
 }
 
+
+
+/// @dev transfers the asset to the to address
 #define macro _SERVE_LOAN() = takes(2) returns(0) {
     // Input stack:             [amount, to]
 
@@ -368,12 +392,19 @@
     SAFE_TRANSFER(0x00)                                                                             // []
 }
 
+
+
+
+/// @notice returns address(this)
 #define macro _REPAY_TO() = {
     address
 }
 
 
 
+
+/// @notice safe transfers token and reverts otherwise
+/// @dev same as huffmate's safe transfer but checks that address to call has code deployed to it first
 #define macro SAFE_TRANSFER(mem_ptr) = takes(3) returns(0) {
     // Input stack:            [to, amount, token]
     // Output stack:           []
@@ -439,6 +470,7 @@
 
 
 
+/// @notice reverts if address has no code deployed to it 
 #define macro CONFIRM_THAT_ADDRES_HAS_CODE() = takes(1) returns(0) {
     // Input stack:                [addr]
 
