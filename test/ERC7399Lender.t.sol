@@ -18,6 +18,8 @@ contract ERC7399LenderTest is PRBTest, StdCheats {
     FlashBorrower internal borrower;
     address internal asset;
     address internal otherAsset;
+    uint256 reserves = 999e18;
+    uint256 fee = 10;
 
     /// @dev A function invoked before each test case is run.
     function setUp() public virtual {
@@ -25,8 +27,7 @@ contract ERC7399LenderTest is PRBTest, StdCheats {
 
         asset = address(new ERC20Mock("Asset", "AST"));
         ERC20Mock(asset).approve(0x2e234DAe75C793f67A35089C9d99245E1C58470b, type(uint256).max);
-        lender = new ERC7399Lender(ERC20Mock(asset), 10);
-
+        // lender = new ERC7399Lender(ERC20Mock(asset), fee);
         string memory ConstantsWrapper = vm.readFile("test/HuffWrappers/ConstantsWrapper.huff");
         lender = ERC7399Lender(
             payable(
@@ -36,11 +37,10 @@ contract ERC7399LenderTest is PRBTest, StdCheats {
             )
         );
         console2.log(address(this));
-
         borrower = new FlashBorrower(lender);
 
-        ERC20Mock(asset).approve(address(lender), type(uint256).max);
-        lender.deposit(1000e18);
+        IERC20(asset).transfer(address(lender), reserves); // Keeping 1e18 for the flash fee.
+        lender.sync();
     }
 
     /// @dev Simple flash loan test.
@@ -48,36 +48,35 @@ contract ERC7399LenderTest is PRBTest, StdCheats {
         console2.log("test_flash");
         uint256 lenderBalance = IERC20(asset).balanceOf(address(lender));
         uint256 loan = 1e18;
-        uint256 fee = lender.flashFee(asset, loan);
-        ERC20Mock(asset).mint(address(this), fee);
-        IERC20(asset).transfer(address(borrower), fee);
+        uint256 flashFee = lender.flashFee(asset, loan);
+        IERC20(asset).transfer(address(borrower), flashFee);
         borrower.flashBorrow(asset, loan);
 
         assertEq(borrower.flashInitiator(), address(borrower));
         assertEq(address(borrower.flashAsset()), address(asset));
         assertEq(borrower.flashAmount(), loan);
-        assertEq(borrower.flashBalance(), loan + fee); // The amount we transferred to pay for fees, plus the amount we
+        assertEq(borrower.flashBalance(), loan + flashFee); // The amount we transferred to pay for fees, plus the
+            // amount we
             // borrowed
-        assertEq(borrower.flashFee(), fee);
-        assertEq(IERC20(asset).balanceOf(address(lender)), lenderBalance + fee);
+        assertEq(borrower.flashFee(), flashFee);
+        assertEq(IERC20(asset).balanceOf(address(lender)), lenderBalance + flashFee);
     }
 
-    // function test_flashAndReenter() external {
-    //     console2.log("test_flashAndReenter");
-    //     uint256 lenderBalance = IERC20(asset).balanceOf(address(lender));
-    //     uint256 firstLoan = 1e18;
-    //     uint256 secondLoan = 2e18;
-    //     uint256 fees = lender.flashFee(asset, firstLoan) + lender.flashFee(asset, secondLoan);
-    //     ERC20Mock(asset).mint(address(this), fees);
-    //     IERC20(asset).transfer(address(borrower), fees);
-    //     borrower.flashBorrowAndReenter(asset, firstLoan);
+    function test_flashAndReenter() external {
+        console2.log("test_flashAndReenter");
+        uint256 lenderBalance = IERC20(asset).balanceOf(address(lender));
+        uint256 firstLoan = 1e18;
+        uint256 secondLoan = 2e18;
+        uint256 fees = lender.flashFee(asset, firstLoan) + lender.flashFee(asset, secondLoan);
+        IERC20(asset).transfer(address(borrower), fees);
+        borrower.flashBorrowAndReenter(asset, firstLoan);
 
-    //     assertEq(borrower.flashInitiator(), address(borrower));
-    //     assertEq(address(borrower.flashAsset()), address(asset));
-    //     assertEq(borrower.flashAmount(), firstLoan + secondLoan);
-    //     assertEq(borrower.flashBalance(), firstLoan + secondLoan + fees); // The amount we transferred to pay for
-    //         // plus the amount we borrowed
-    //     assertEq(borrower.flashFee(), fees);
-    //     assertEq(IERC20(asset).balanceOf(address(lender)), lenderBalance + fees);
-    // }
+        assertEq(borrower.flashInitiator(), address(borrower));
+        assertEq(address(borrower.flashAsset()), address(asset));
+        assertEq(borrower.flashAmount(), firstLoan + secondLoan);
+        assertEq(borrower.flashBalance(), firstLoan + secondLoan + fees); // The amount we transferred to pay for fees,
+            // plus the amount we borrowed
+        assertEq(borrower.flashFee(), fees);
+        assertEq(IERC20(asset).balanceOf(address(lender)), lenderBalance + fees);
+    }
 }

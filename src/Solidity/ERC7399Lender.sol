@@ -5,13 +5,15 @@ import "erc7399/IERC7399.sol";
 
 import { IERC20 } from "./interfaces/IERC20.sol";
 import { UnsupportedToken, InsufficientBalance, OnlyOwner } from "./lib/Errors.sol";
+
 /**
  * @author Alberto Cuesta Cañada
  * @dev Minimal {ERC7399} contract that allows flash lending of a single asset for a fixed fee.
  */
-
 contract ERC7399Lender is IERC7399 {
     event Flash(IERC20 indexed asset, uint256 amount, uint256 fee);
+    event Sync();
+    event Defund(uint256 amount);
 
     address public immutable owner;
     IERC20 public immutable asset;
@@ -36,12 +38,22 @@ contract ERC7399Lender is IERC7399 {
         _;
     }
 
-    /// @dev Shutdown the lender and remove all assets
-    function end() external {
+    /// @dev Add funds to this contract. The assets must have been transferred previous to this call.
+    function sync() external {
+        reserves = asset.balanceOf(address(this));
+        emit Sync();
+    }
+
+    /// @dev Remove all funds from this contract
+    function defund() external {
         if (msg.sender != owner) {
             revert OnlyOwner(msg.sender, owner);
         }
-        asset.transfer(owner, asset.balanceOf(address(this)));
+
+        reserves = 0;
+        uint256 amount = asset.balanceOf(address(this));
+        asset.transfer(owner, amount);
+        emit Defund(amount);
     }
 
     /// @inheritdoc IERC7399
@@ -76,7 +88,7 @@ contract ERC7399Lender is IERC7399 {
         bytes memory result = callback(msg.sender, _repayTo(), asset_, amount, fee_, data);
 
         // Verify and accept the repayment
-        _acceptTransfer(fee_);
+        _acceptTransfer(amount + fee_);
 
         emit Flash(IERC20(asset_), amount, fee_);
 
@@ -101,6 +113,7 @@ contract ERC7399Lender is IERC7399 {
     /// @param loanReceiver The receiver of the loan assets.
     /// @param amount The amount of assets lent.
     function _serveLoan(address loanReceiver, uint256 amount) internal {
+        reserves -= amount;
         asset.transfer(loanReceiver, amount);
     }
 
@@ -110,8 +123,8 @@ contract ERC7399Lender is IERC7399 {
     }
 
     /// @dev Verify that a transfer to this contract happened.
-    function _acceptTransfer(uint256 fee_) internal {
-        uint256 expectedReserves = reserves + fee_;
+    function _acceptTransfer(uint256 amount) internal {
+        uint256 expectedReserves = reserves + amount;
         uint256 currentReserves = asset.balanceOf(address(this));
 
         // We do not accept donations for security reasons.
@@ -121,10 +134,5 @@ contract ERC7399Lender is IERC7399 {
         if (currentReserves < expectedReserves) {
             revert InsufficientBalance({ expected: expectedReserves, balance: currentReserves });
         }
-    }
-
-    function deposit(uint256 amount) external {
-        asset.transferFrom(msg.sender, address(this), amount);
-        reserves += amount;
     }
 }

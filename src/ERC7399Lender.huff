@@ -10,17 +10,18 @@
 
 
 /// @notice INTERFACE
-#define function end() nonpayable returns()
 #define function maxFlashLoan(address asset_) view returns(uint256)
 #define function flashFee(address asset_, uint256 amount) view returns(uint256)
 // #define function flash(address loanReceiver, address asset_, uint256 amount, bytes calldata data, function callback) nonpayable returns(bytes memory)
-#define function deposit(uint256 amount) nonpayable returns()
+#define function sync() nonpayable returns()
+#define function defund() nonpayable returns()
 
 
 
 /// @notice EVENTS
 #define event Flash(address indexed asset, uint256 amount, uint256 fee)
-
+#define event Sync()
+#define event Defund()
 
 
 
@@ -45,10 +46,10 @@
     0x00 calldataload 0xe0 shr                                                                      // [func_sig]
 
     dup1 [FLASH_FUNC_SIG] eq flash_jumpdest jumpi                                                   // [func_sig]
-    dup1 __FUNC_SIG(end) eq end_jumpdest jumpi                                                      // [func_sig]
     dup1 __FUNC_SIG(maxFlashLoan) eq maxFlashLoan_jumpdest jumpi                                    // [func_sig]
     dup1 __FUNC_SIG(flashFee) eq flashFee_jumpdest jumpi                                            // [func_sig]
-    dup1 __FUNC_SIG(deposit) eq deposit_jumpdest jumpi                                              // [func_sig]
+    dup1 __FUNC_SIG(sync) eq sync_jumpdest jumpi                                                    // [func_sig]
+    dup1 __FUNC_SIG(defund) eq defund_jumpdest jumpi                                                // [func_sig]
 
     0x00 0x00 revert
 
@@ -56,33 +57,68 @@
     flash_jumpdest:
         FLASH()
     
-    end_jumpdest:
-        END()
-
     maxFlashLoan_jumpdest:
         MAX_FLASHLOAN()
 
     flashFee_jumpdest:
         FLASH_FEE()
 
-    deposit_jumpdest:
-        DEPOSIT()
+    sync_jumpdest:
+        SYNC()
+
+    defund_jumpdest:
+        DEFUND()
 }
 
 
 
-/// @notice temporal deposit function for testing
-#define macro DEPOSIT() = {
-    [ASSET]
-    0x04 calldataload
-    address
-    caller
-    SAFE_TRANSFER_FROM(0x00)
+/// @notice sync balance of  address(this) with reserves
+/**
+ * function sync() external
+ *
+ * Input data expected
+ * 0x00 - 0x04: 0x........
+ */
+#define macro SYNC() = {
+    // update reserves
+    GET_ASSET_BALANCE_OF_THIS()                                                                     // [balance]
+    [RESERVES] sstore                                                                               // []
 
-    [RESERVES] sload
-    0x04 calldataload
-    add
-    [RESERVES] sstore
+    // emit sync
+    __EVENT_HASH(Sync)                                                                              // [topic1]
+    0x00 0x00                                                                                       // [offset, length, topic1]
+    log1                                                                                            // []
+
+    stop
+}
+
+
+
+/// @notice withdraw
+/**
+ * function defund() external
+ *
+ * Input data expected
+ * 0x00 - 0x04: 0x........
+ */
+#define macro DEFUND() = {
+    // only owner can call
+    ONLY_OWNER()                                                                                    // []
+    
+    // set reserves to 0
+    0x00 [RESERVES] sstore                                                                          // []
+
+    // withdraw funds
+    [ASSET]                                                                                         // [asset]
+    GET_ASSET_BALANCE_OF_THIS()                                                                     // [amount, asset]
+    [OWNER]                                                                                         // [to, amount, asset]
+    SAFE_TRANSFER(0x00)                                                                             // []
+
+
+    // emit defund
+    __EVENT_HASH(Defund)                                                                            // [topic1]
+    0x00 0x00                                                                                       // [offset, length, topic1]
+    log1                                                                                            // []
 
     stop
 }
@@ -190,7 +226,7 @@
 
     // accept transfer
     accept_transfer_jumpdest:                                                                       // [len, callback_address, flash_fee, amount, asset_]
-        pop dup2                                                                                    // [flash_fee, callback_address, flash_fee, amount, asset_]
+        pop dup2 dup4 add                                                                                    // [flash_fee, callback_address, flash_fee, amount, asset_]
         _ACCEPT_TRANSFER()                                                                          // [callback_address, flash_fee, amount, asset_]
 
 
@@ -218,29 +254,6 @@
     returndatasize 0x40 add                                                                         // [length]
     0x00                                                                                            // [offset, length]
     return                                                                                                                                  
-}
-
-
-
-/// @notice End function implementation
-/**
- * #define function end() external
- *
- * Input data expected
- * 0x00 - 0x04: 0x........
- */
-#define macro END() = {
-    ONLY_OWNER()
-
-    // continue execution
-    transfer_all_contracts_asset_to_owner:                                                          // []
-        [ASSET]                                                                                     // [token]
-        GET_ASSET_BALANCE_OF_THIS()                                                                 // [amount, token]
-        [OWNER]                                                                                     // [to, amount, token]
-        SAFE_TRANSFER(0x00)                                                                         // []
-    
-    // stop execution with a success
-    stop
 }
 
 
@@ -388,6 +401,13 @@
 #define macro _SERVE_LOAN() = takes(2) returns(0) {
     // Input stack:             [amount, to]
 
+    // update reserves
+    dup1                                                                                            // [amount, amount, to]
+    [RESERVES] sload                                                                                // [reserves, amount, amount, to]
+    sub                                                                                             // [newReserves, amount, to]
+    [RESERVES] sstore                                                                               // [amount, to]
+
+    // transfer asset to `to`
     [ASSET] swap2                                                                                   // [to, amount, token]
     SAFE_TRANSFER(0x00)                                                                             // []
 }

@@ -17,7 +17,7 @@ contract ERC7399MultiLender is IERC7399 {
 
     address public immutable owner;
     uint256 public immutable fee; //  1 == 0.01 %.
-    mapping (IERC20 asset => uint256 balance) public reserves;
+    mapping(IERC20 asset => uint256 balance) public reserves;
 
     /**
      * @param asset Asset supported for flash lending
@@ -120,7 +120,7 @@ contract ERC7399MultiLender is IERC7399 {
     function _acceptTransfer(IERC20 asset, uint256 fee_) internal {
         uint256 expectedReserves = reserves[asset] + fee_;
         uint256 currentReserves = asset.balanceOf(address(this));
-        
+
         // We do not accept donations for security reasons.
         // Excess assets can be removed by using `flash`.
         reserves[asset] = expectedReserves;

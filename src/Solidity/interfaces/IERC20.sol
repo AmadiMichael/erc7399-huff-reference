@@ -6,7 +6,6 @@ pragma solidity ^0.7.0 || ^0.8.4;
  * @dev Interface of the ERC20 standard as defined in the EIP.
  */
 interface IERC20 {
-
     /**
      * @dev Returns the name of the token.
      */
